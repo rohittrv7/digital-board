@@ -51,8 +51,7 @@ export const projects: Project[] = [
       { title: "Screen annotation", detail: "Draw straight over slides, PDFs or anything else on screen." },
       { title: "Works offline", detail: "No account, no cloud, no internet required. Installs and runs." },
     ],
-    // TODO(you): drop your installer link here
-    downloadUrl: "/downloads/digital-teaching-board-setup.exe",
+    downloadUrl: "https://github.com/rohittrv7/digital-board/releases/download/Digital_Teaching_Board/Digital.Teaching.Board.Setup.1.0.0.exe",
     version: "1.0.0",
     platform: "Windows",
     fileSize: "145 MB",
