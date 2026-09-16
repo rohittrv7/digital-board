@@ -22,7 +22,7 @@ export async function exportAllSlidesToPdf(slides: Slide[], showWatermark: boole
   pdf.setProperties({
     title: 'Digital Teaching Board Lecture',
     subject: 'Interactive Whiteboard Notes & Annotations',
-    author: AUTHOR_NAME, // [YOUR NAME] placeholder
+    author: AUTHOR_NAME,
     creator: `Digital Teaching Board by ${AUTHOR_NAME}`
   });
 

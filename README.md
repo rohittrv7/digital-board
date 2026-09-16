@@ -168,7 +168,7 @@ Teaching ke dauran bina mouse touch kiye fast switch karne ke liye in shortcuts 
 
 - **Application Name:** Digital Teaching Board
 - **Version:** 1.0.0 (Windows Desktop Release)
-- **Created By:** [YOUR NAME]
+- **Created By:** Ravana
 - **Website:** [https://toolshedd.netlify.app/](https://toolshedd.netlify.app/)
 - **License:** Free for Teachers, Educators & Students
 

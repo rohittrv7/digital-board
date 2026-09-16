@@ -64,8 +64,8 @@ export const saveProjectToDisk = createAsyncThunk(
     const projectData = JSON.stringify({
       version: '1.0.0',
       appName: 'Digital Teaching Board',
-      createdWith: 'Digital Teaching Board by [YOUR NAME]', // [YOUR NAME] placeholder
-      author: '[YOUR NAME]', // [YOUR NAME] placeholder
+      createdWith: 'Digital Teaching Board by Ravana',
+      author: 'Ravana',
       savedAt: Date.now(),
       savedAtISO: new Date().toISOString(),
       lectureTitle: state.slides.lectureTitle,

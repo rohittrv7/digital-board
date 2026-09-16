@@ -7,8 +7,7 @@
  */
 
 export const site = {
-  // TODO(you): replace with your real name / handle
-  makerName: "Your Name",
+  makerName: "Ravana",
   hubName: "Toolshed",
   tagline: "Free software, built in the open.",
   // TODO(you): replace with your real "why I build" note
