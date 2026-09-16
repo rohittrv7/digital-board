@@ -1,0 +1,70 @@
+{
+  "name": "digital-teaching-board",
+  "version": "1.0.0",
+  "description": "Professional offline desktop digital teaching board application",
+  "author": "Rohit",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && npm run build:main && electron .",
+    "build:main": "esbuild src/main/main.ts src/main/preload.ts --platform=node --target=node20 --outdir=dist-electron --bundle --external:electron",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:renderer",
+    "dist": "npm run build && electron-builder",
+    "start": "electron ."
+  },
+  "build": {
+    "appId": "com.rohit.digitalteachingboard",
+    "productName": "Digital Teaching Board",
+    "icon": "build/icon.ico",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Digital Teaching Board"
+    },
+    "directories": {
+      "output": "dist-installer"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "build/icon.ico",
+      "build/icon.png",
+      "package.json"
+    ]
+  },
+  "dependencies": {
+    "@reduxjs/toolkit": "^2.12.0",
+    "fabric": "^7.4.0",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^1.45.0",
+    "pdfjs-dist": "^6.3.289",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-redux": "^9.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.13.9",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.0",
+    "wait-on": "^8.0.2"
+  }
+}

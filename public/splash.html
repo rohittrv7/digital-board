@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Teaching Board</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #0c0e0a;
+      color: #f4f6ee;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      border: 1px solid #242b1d;
+      border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    }
+
+    /* Ambient glow behind logo */
+    .glow-bg {
+      position: absolute;
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(196, 241, 53, 0.15) 0%, rgba(12, 14, 10, 0) 70%);
+      top: 40px;
+      pointer-events: none;
+    }
+
+    .icon-container {
+      position: relative;
+      width: 96px;
+      height: 96px;
+      margin-bottom: 18px;
+      filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.5));
+      animation: floatLogo 3s ease-in-out infinite;
+    }
+
+    .icon-container img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    @keyframes floatLogo {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
+
+    .title {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: #f4f6ee;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      font-weight: 600;
+      color: #9ba38e;
+      letter-spacing: 0.5px;
+      margin-bottom: 22px;
+      text-transform: uppercase;
+    }
+
+    /* Modern Lime Progress Bar */
+    .progress-bar-container {
+      width: 200px;
+      height: 4px;
+      background-color: #1a2214;
+      border-radius: 9999px;
+      overflow: hidden;
+      position: relative;
+      margin-bottom: 20px;
+    }
+
+    .progress-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: 40%;
+      background: linear-gradient(90deg, #9bc61a, #C4F135, #ffffff);
+      border-radius: 9999px;
+      box-shadow: 0 0 10px #C4F135;
+      animation: progressSlide 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+
+    @keyframes progressSlide {
+      0% {
+        left: -40%;
+        width: 30%;
+      }
+      50% {
+        width: 60%;
+      }
+      100% {
+        left: 100%;
+        width: 30%;
+      }
+    }
+
+    .footer {
+      position: absolute;
+      bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-family: monospace;
+      color: #616c54;
+      letter-spacing: 1px;
+    }
+
+    .author-highlight {
+      color: #C4F135;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="glow-bg"></div>
+
+  <div class="icon-container">
+    <img src="icon.png" alt="Digital Teaching Board">
+  </div>
+
+  <h1 class="title">Digital Teaching Board</h1>
+  <div class="subtitle">Professional Lecture Studio</div>
+
+  <div class="progress-bar-container">
+    <div class="progress-bar"></div>
+  </div>
+
+  <div class="footer">
+    <span>BY</span>
+    <!-- Configurable author name -->
+    <span class="author-highlight">ROHIT</span>
+  </div>
+</body>
+</html>
