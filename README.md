@@ -3,7 +3,7 @@
 > **Aapki classroom aur online teaching ke liye ek modern, simple aur powerful digital whiteboard.**
 >
 > 🌐 **Official Website:** [https://toolshedd.netlify.app/](https://toolshedd.netlify.app/)  
-> 📥 **Download Windows App (.exe):** [Direct Download v1.0.0 Setup](https://github.com/rohittrv7/digital-board/releases/download/Digital_Teaching_Board/Digital.Teaching.Board.Setup.1.0.0.exe) | [Website Page](https://toolshedd.netlify.app/#release)
+> 📥 **Download Windows App (.exe):** [Direct Download v1.1.0 Setup](https://github.com/rohittrv7/digital-board/releases/download/Digital_Teaching_Board/Digital.Teaching.Board.Setup.1.1.0.exe) | [Website Page](https://toolshedd.netlify.app/#release)
 
 Digital Teaching Board ko khas taur par teachers, educators aur content creators ke liye design kiya gaya hai. Chahe aap live online class le rahe hon, YouTube lecture record kar rahe hon, ya offline smartboard par padha rahe hon — ye app aapko ek ultra-smooth, clean aur distraction-free teaching experience deta hai.
 

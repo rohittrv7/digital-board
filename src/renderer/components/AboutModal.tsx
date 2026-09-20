@@ -10,7 +10,7 @@ import { X, Heart, Sparkles, Layers, PenTool, FileDown, ExternalLink, ShieldChec
  * =======================================================================
  */
 export const AUTHOR_NAME = 'Ravana';
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 
 export const AboutModal: React.FC = () => {
   const dispatch = useAppDispatch();

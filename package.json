@@ -1,6 +1,6 @@
 {
   "name": "digital-teaching-board",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Professional offline desktop digital teaching board application",
   "author": "Rohit",
   "main": "dist-electron/main.js",
