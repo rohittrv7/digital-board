@@ -13,6 +13,7 @@ export interface UIState {
   isFullscreen: boolean;
   isZenMode: boolean;
   activeDialog: 'none' | 'save' | 'shortcuts' | 'about';
+  savedNormalZoom: { zoomLevel: number; panOffset: { x: number; y: number } } | null;
 }
 
 const getInitialTheme = (): 'dark' | 'light' => {
@@ -43,7 +44,8 @@ const initialState: UIState = {
   showWatermark: getInitialWatermark(),
   isFullscreen: false,
   isZenMode: false,
-  activeDialog: 'none'
+  activeDialog: 'none',
+  savedNormalZoom: null
 };
 
 export const uiSlice = createSlice({
@@ -101,10 +103,43 @@ export const uiSlice = createSlice({
       state.isFullscreen = action.payload;
     },
     toggleZenMode: (state) => {
-      state.isZenMode = !state.isZenMode;
+      const nextZen = !state.isZenMode;
+      state.isZenMode = nextZen;
+      if (nextZen) {
+        // Entering Zen mode: save current normal zoom & pan, start Zen mode at 100% fit-to-screen
+        state.savedNormalZoom = {
+          zoomLevel: state.zoomLevel,
+          panOffset: { ...state.panOffset }
+        };
+        state.zoomLevel = 1;
+        state.panOffset = { x: 0, y: 0 };
+      } else {
+        // Exiting Zen mode: restore previous normal zoom & pan
+        if (state.savedNormalZoom) {
+          state.zoomLevel = state.savedNormalZoom.zoomLevel;
+          state.panOffset = { ...state.savedNormalZoom.panOffset };
+          state.savedNormalZoom = null;
+        }
+      }
     },
     setZenMode: (state, action: PayloadAction<boolean>) => {
-      state.isZenMode = action.payload;
+      const nextZen = action.payload;
+      if (state.isZenMode === nextZen) return;
+      state.isZenMode = nextZen;
+      if (nextZen) {
+        state.savedNormalZoom = {
+          zoomLevel: state.zoomLevel,
+          panOffset: { ...state.panOffset }
+        };
+        state.zoomLevel = 1;
+        state.panOffset = { x: 0, y: 0 };
+      } else {
+        if (state.savedNormalZoom) {
+          state.zoomLevel = state.savedNormalZoom.zoomLevel;
+          state.panOffset = { ...state.savedNormalZoom.panOffset };
+          state.savedNormalZoom = null;
+        }
+      }
     },
     toggleAbout: (state) => {
       state.isAboutOpen = !state.isAboutOpen;

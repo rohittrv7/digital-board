@@ -7,10 +7,12 @@ import { ColorPaletteStrip, PRESET_COLORS } from './components/ColorPaletteStrip
 import { BackgroundPickerStrip } from './components/BackgroundPickerStrip';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { AboutModal, AUTHOR_NAME } from './components/AboutModal';
+import { DeleteSlideModal } from './components/DeleteSlideModal';
+import { SlideRestoreToast } from './components/SlideRestoreToast';
 import { BoardCanvas } from './features/canvas/BoardCanvas';
 import { setTool, setColor } from './store/toolsSlice';
 import { undo, redo } from './store/historySlice';
-import { toggleShortcuts, setShortcutsOpen, toggleZenMode, setZenMode, resetZoom } from './store/uiSlice';
+import { toggleShortcuts, setShortcutsOpen, toggleZenMode, setZenMode, resetZoom, setZoom } from './store/uiSlice';
 import {
   saveProjectToDisk,
   setSlides,
@@ -19,11 +21,13 @@ import {
   addSlide,
   duplicateSlide,
   deleteSlide,
+  restoreSlide,
   setSlideBackground,
+  Slide,
   BackgroundType
 } from './store/slidesSlice';
 import { setupAutoSave } from './services/storageService';
-import { ChevronLeft, ChevronRight, Pen, Highlighter, Eraser, RotateCcw, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pen, Highlighter, Eraser, RotateCcw, Plus, ZoomIn, ZoomOut } from 'lucide-react';
 
 export const App: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -49,6 +53,31 @@ export const App: React.FC = () => {
     const timer = setTimeout(() => setShowLaunchSplash(false), 2600);
     return () => clearTimeout(timer);
   }, []);
+
+  // Delete Slide Confirmation & Undo Toast state
+  const [deleteModalState, setDeleteModalState] = useState<{
+    isOpen: boolean;
+    slideId: string;
+    slideNumber: number;
+    slideIndex: number;
+  }>({
+    isOpen: false,
+    slideId: '',
+    slideNumber: 1,
+    slideIndex: 0
+  });
+
+  const [restoreToastState, setRestoreToastState] = useState<{
+    visible: boolean;
+    slide: Slide | null;
+    slideIndex: number;
+    slideNumber: number;
+  }>({
+    visible: false,
+    slide: null,
+    slideIndex: 0,
+    slideNumber: 1
+  });
 
   // Zen Mode Floating Color Popup state
   const [isZenColorPopupOpen, setIsZenColorPopupOpen] = useState(false);
@@ -85,8 +114,13 @@ export const App: React.FC = () => {
     }
   }, [dispatch]);
 
-  // Show indicator toast whenever Zen mode is engaged
+  // Show indicator toast whenever Zen mode is engaged and notify canvas to fit screen
   useEffect(() => {
+    // When entering or exiting Zen mode, trigger window resize event after layout settles
+    window.dispatchEvent(new Event('resize'));
+    const t1 = setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+    const t2 = setTimeout(() => window.dispatchEvent(new Event('resize')), 150);
+
     if (isZenMode) {
       setZenToastVisible(true);
       if (zenToastTimerRef.current) clearTimeout(zenToastTimerRef.current);
@@ -97,6 +131,11 @@ export const App: React.FC = () => {
       setZenToastVisible(false);
       setIsZenColorPopupOpen(false);
     }
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [isZenMode]);
 
   // Close floating color palette on outside click
@@ -111,6 +150,49 @@ export const App: React.FC = () => {
       return () => document.removeEventListener('pointerdown', handleOutsideClick);
     }
   }, [isZenColorPopupOpen]);
+
+  // Listen for slide deletion requests from sidebar or shortcuts
+  useEffect(() => {
+    const handleRequestDelete = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.slideId) return;
+      const targetIndex = slidesRef.current.findIndex(s => s.id === detail.slideId);
+      if (targetIndex === -1 || slidesRef.current.length <= 1) return;
+      setDeleteModalState({
+        isOpen: true,
+        slideId: detail.slideId,
+        slideNumber: targetIndex + 1,
+        slideIndex: targetIndex
+      });
+    };
+
+    window.addEventListener('board:request-delete-slide', handleRequestDelete);
+    return () => window.removeEventListener('board:request-delete-slide', handleRequestDelete);
+  }, []);
+
+  const handleConfirmDeleteSlide = () => {
+    const slideToDelete = slides.find(s => s.id === deleteModalState.slideId);
+    if (!slideToDelete) return;
+    const index = deleteModalState.slideIndex;
+    const slideNumber = deleteModalState.slideNumber;
+
+    dispatch(deleteSlide(deleteModalState.slideId));
+    setRestoreToastState({
+      visible: true,
+      slide: slideToDelete,
+      slideIndex: index,
+      slideNumber: slideNumber
+    });
+  };
+
+  const handleUndoDeleteSlide = () => {
+    if (restoreToastState.slide) {
+      dispatch(restoreSlide({
+        slide: restoreToastState.slide,
+        index: restoreToastState.slideIndex
+      }));
+    }
+  };
 
   // Setup 60s Auto-Save cycle & Window close handler
   useEffect(() => {
@@ -216,9 +298,14 @@ export const App: React.FC = () => {
         if (currentSlides.length <= 1) {
           return;
         }
-        const confirmed = window.confirm('Are you sure you want to delete this slide? This action cannot be undone.');
-        if (confirmed) {
-          dispatch(deleteSlide(currentSlideId));
+        const idx = currentSlides.findIndex(s => s.id === currentSlideId);
+        if (idx !== -1) {
+          setDeleteModalState({
+            isOpen: true,
+            slideId: currentSlideId,
+            slideNumber: idx + 1,
+            slideIndex: idx
+          });
         }
         return;
       }
@@ -273,8 +360,22 @@ export const App: React.FC = () => {
         return;
       }
 
+      // 8. Zoom In & Out Shortcuts (Ctrl+= / Ctrl+- / Ctrl+Numpad)
+      if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+' || e.code === 'Equal' || e.code === 'NumpadAdd')) {
+        e.preventDefault();
+        const curZoom = store.getState().ui.zoomLevel;
+        dispatch(setZoom(Math.min(4.0, Number((curZoom + 0.1).toFixed(2)))));
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract')) {
+        e.preventDefault();
+        const curZoom = store.getState().ui.zoomLevel;
+        dispatch(setZoom(Math.max(0.25, Number((curZoom - 0.1).toFixed(2)))));
+        return;
+      }
+
       // 8. Reset Zoom & Center Pan (Ctrl+0 / Cmd+0)
-      if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+      if ((e.ctrlKey || e.metaKey) && (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0')) {
         e.preventDefault();
         dispatch(resetZoom());
         return;
@@ -377,7 +478,7 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {/* Floating Re-center Pill when Canvas is Zoomed or Panned */}
+          {/* Floating Re-center Pill when Canvas is Zoomed or Panned (Normal & Fullscreen) */}
           {(zoomLevel !== 1 || panOffset.x !== 0 || panOffset.y !== 0) && (
             <button
               type="button"
@@ -387,7 +488,7 @@ export const App: React.FC = () => {
                   ? 'bg-white/90 hover:bg-white border-[#dce5d0] text-[#1c2217]'
                   : 'bg-[#12150e]/90 hover:bg-[#1f2618] border-[#242b1d] text-[#f4f6ee]'
               }`}
-              title="Reset Zoom & Pan (Ctrl+0)"
+              title="Reset Zoom & Pan (Ctrl+0) &bull; Space+Drag or Scroll to Pan"
             >
               <RotateCcw className={`w-3.5 h-3.5 ${isLight ? 'text-[#68880a]' : 'text-[#C4F135]'}`} />
               <span>{Math.round(zoomLevel * 100)}% &bull; Re-center</span>
@@ -447,10 +548,35 @@ export const App: React.FC = () => {
                   window.dispatchEvent(new CustomEvent('board:commit-now'));
                   dispatch(addSlide());
                 }}
-                className="w-6 h-6 rounded-full bg-[#C4F135] text-[#0c0e0a] flex items-center justify-center hover:bg-[#d2f84b] hover:scale-110 active:scale-95 shadow-md shadow-[#C4F135]/25 transition-all"
+                className="w-6 h-6 rounded-full bg-[#C4F135] text-[#0c0e0a] flex items-center justify-center hover:bg-[#d2f84b] hover:scale-110 active:scale-95 shadow-md shadow-[#C4F135]/25 transition-all mr-1"
                 title="Add New Slide (+)"
               >
                 <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              </button>
+
+              <div className="w-[1px] h-4 bg-[#242b1d] mx-0.5" />
+
+              {/* Quick Fullscreen Zoom Controls */}
+              <button
+                type="button"
+                onClick={() => dispatch(setZoom(Math.max(0.25, Number((zoomLevel - 0.1).toFixed(2)))))}
+                className="p-1 rounded-full text-[#9ba38e] hover:text-[#f4f6ee] hover:bg-[#1f2618] transition-colors"
+                title="Zoom Out (Ctrl -)"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+
+              <span className="text-[11px] font-mono font-bold text-[#9ba38e] px-0.5">
+                {Math.round(zoomLevel * 100)}%
+              </span>
+
+              <button
+                type="button"
+                onClick={() => dispatch(setZoom(Math.min(4.0, Number((zoomLevel + 0.1).toFixed(2)))))}
+                className="p-1 rounded-full text-[#9ba38e] hover:text-[#f4f6ee] hover:bg-[#1f2618] transition-colors"
+                title="Zoom In (Ctrl +)"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
               </button>
             </div>
           )}
@@ -585,6 +711,22 @@ export const App: React.FC = () => {
 
       {/* Shortcuts Help Modal */}
       <ShortcutsModal />
+
+      {/* Delete Slide Confirmation Modal */}
+      <DeleteSlideModal
+        isOpen={deleteModalState.isOpen}
+        slideNumber={deleteModalState.slideNumber}
+        onClose={() => setDeleteModalState(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={handleConfirmDeleteSlide}
+      />
+
+      {/* Undo Delete Slide Snackbar */}
+      <SlideRestoreToast
+        visible={restoreToastState.visible}
+        slideNumber={restoreToastState.slideNumber}
+        onUndo={handleUndoDeleteSlide}
+        onDismiss={() => setRestoreToastState(prev => ({ ...prev, visible: false }))}
+      />
     </div>
   );
 };

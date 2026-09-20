@@ -6,6 +6,9 @@ export type BackgroundType = 'white' | 'chalkboard' | 'blackboard' | 'ruled' | '
 export interface SlideBackground {
   type: BackgroundType;
   value?: string; // Color hex, pattern url, image base64 data url, or pdf page data url
+  offsetX?: number;
+  offsetY?: number;
+  scale?: number;
 }
 
 export interface Slide {
@@ -243,11 +246,13 @@ export const slidesSlice = createSlice({
       }
     },
 
-    updateSlideCanvas: (state, action: PayloadAction<{ id: string; canvasJSON: any; thumbnail?: string }>) => {
+    updateSlideCanvas: (state, action: PayloadAction<{ id: string; canvasJSON?: any; thumbnail?: string }>) => {
       const slide = state.slides.find(s => s.id === action.payload.id);
       if (slide) {
-        slide.canvasJSON = action.payload.canvasJSON;
-        if (action.payload.thumbnail !== undefined) {
+        if (action.payload.canvasJSON !== undefined) {
+          slide.canvasJSON = action.payload.canvasJSON ? JSON.parse(JSON.stringify(action.payload.canvasJSON)) : null;
+        }
+        if (action.payload.thumbnail !== undefined && action.payload.thumbnail !== '') {
           slide.thumbnail = action.payload.thumbnail;
         }
       }
@@ -257,6 +262,28 @@ export const slidesSlice = createSlice({
       const slide = state.slides.find(s => s.id === action.payload.id);
       if (slide) {
         slide.background = action.payload.background;
+      }
+    },
+
+    restoreSlide: (state, action: PayloadAction<{ slide: Slide; index: number }>) => {
+      const { slide, index } = action.payload;
+      const targetIndex = Math.max(0, Math.min(index, state.slides.length));
+      state.slides.splice(targetIndex, 0, slide);
+      state.activeSlideId = slide.id;
+    },
+
+    updateSlideBackgroundPosition: (
+      state,
+      action: PayloadAction<{ id: string; offsetX: number; offsetY: number; scale?: number }>
+    ) => {
+      const slide = state.slides.find(s => s.id === action.payload.id);
+      if (slide) {
+        slide.background = {
+          ...slide.background,
+          offsetX: action.payload.offsetX,
+          offsetY: action.payload.offsetY,
+          scale: action.payload.scale ?? slide.background.scale ?? 1
+        };
       }
     },
 
@@ -276,13 +303,27 @@ export const slidesSlice = createSlice({
 
     appendSlides: (state, action: PayloadAction<Slide[]>) => {
       if (action.payload.length === 0) return;
-      // If current board has only 1 initial blank slide, replace it with the imported PDF slides
-      if (
-        state.slides.length === 1 &&
-        !state.slides[0].canvasJSON &&
-        (!state.slides[0].thumbnail || state.slides[0].thumbnail === '') &&
-        state.slides[0].background.type === 'chalkboard'
-      ) {
+
+      // Helper to check if a slide is pristine and unedited (no drawn strokes or imported content)
+      const isBlankUntouched = (s: Slide): boolean => {
+        // Must not have a PDF or custom image background
+        if (s.background.type === 'pdf' || s.background.type === 'image') return false;
+        
+        // Check canvasJSON objects
+        if (!s.canvasJSON) return true;
+        let parsed = s.canvasJSON;
+        if (typeof parsed === 'string') {
+          try {
+            parsed = JSON.parse(parsed);
+          } catch {
+            return false;
+          }
+        }
+        return !parsed.objects || !Array.isArray(parsed.objects) || parsed.objects.length === 0;
+      };
+
+      // If current board has only 1 initial blank/untouched slide, replace it with the imported PDF slides
+      if (state.slides.length === 1 && isBlankUntouched(state.slides[0])) {
         state.slides = action.payload;
       } else {
         state.slides.push(...action.payload);
@@ -361,6 +402,8 @@ export const {
   setActiveSlide,
   updateSlideCanvas,
   setSlideBackground,
+  restoreSlide,
+  updateSlideBackgroundPosition,
   setSlides,
   appendSlides,
   setImportPdfProgress,

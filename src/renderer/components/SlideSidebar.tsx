@@ -153,7 +153,9 @@ export const SlideSidebar: React.FC = () => {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        dispatch(deleteSlide(slide.id));
+                        window.dispatchEvent(new CustomEvent('board:request-delete-slide', {
+                          detail: { slideId: slide.id }
+                        }));
                       }}
                       className={`p-1 rounded transition-colors ${
                         isLight

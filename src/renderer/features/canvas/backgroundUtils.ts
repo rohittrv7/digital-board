@@ -64,11 +64,14 @@ export async function applyBackgroundToCanvas(canvas: Canvas, bg: SlideBackgroun
         const img = await FabricImage.fromURL(bg.value);
         const imgW = img.width || 1920;
         const imgH = img.height || 1080;
-        const scale = Math.min(1920 / imgW, 1080 / imgH);
+        const baseScale = Math.min(1920 / imgW, 1080 / imgH);
+        const scale = baseScale * (bg.scale || 1);
         const scaledWidth = imgW * scale;
         const scaledHeight = imgH * scale;
-        const left = (1920 - scaledWidth) / 2;
-        const top = (1080 - scaledHeight) / 2;
+        const baseLeft = (1920 - scaledWidth) / 2;
+        const baseTop = (1080 - scaledHeight) / 2;
+        const left = baseLeft + (bg.offsetX || 0);
+        const top = baseTop + (bg.offsetY || 0);
 
         img.set({
           scaleX: scale,

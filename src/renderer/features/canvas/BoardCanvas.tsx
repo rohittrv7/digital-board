@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Canvas, PencilBrush, Rect, Circle, Line, IText, Group, Polygon, Path, Point, config, FabricImage } from 'fabric';
 import { useAppDispatch, useAppSelector, store } from '../../store';
-import { updateSlideCanvas } from '../../store/slidesSlice';
+import { updateSlideCanvas, updateSlideBackgroundPosition } from '../../store/slidesSlice';
 import { pushHistory, initSlideHistory } from '../../store/historySlice';
 import { setTool } from '../../store/toolsSlice';
 import { setPanOffset, setIsPanning, setZoom } from '../../store/uiSlice';
 import { applyBackgroundToCanvas } from './backgroundUtils';
 import { CanvasWatermark } from '../../components/CanvasWatermark';
-import { BringToFront, SendToBack, ArrowUp, ArrowDown, Copy, Trash2 } from 'lucide-react';
+import { BringToFront, SendToBack, ArrowUp, ArrowDown, Copy, Trash2, Move, Check, RotateCcw } from 'lucide-react';
 
 // Set High-DPI / Retina backing store resolution for razor-sharp HD strokes
 if (typeof window !== 'undefined') {
@@ -16,6 +16,33 @@ if (typeof window !== 'undefined') {
 
 const VIRTUAL_WIDTH = 1920;
 const VIRTUAL_HEIGHT = 1080;
+
+// Helper to clamp pan offset so canvas content cannot pan into empty/blank void
+function clampPanOffset(
+  targetX: number,
+  targetY: number,
+  zoom: number,
+  containerEl: HTMLElement | null,
+  canvasW: number,
+  canvasH: number
+): { x: number; y: number } {
+  if (!containerEl || zoom <= 1.0) {
+    return { x: 0, y: 0 };
+  }
+  const viewportW = containerEl.clientWidth || window.innerWidth;
+  const viewportH = containerEl.clientHeight || window.innerHeight;
+
+  const visualW = canvasW * zoom;
+  const visualH = canvasH * zoom;
+
+  const maxPanX = visualW > viewportW ? (visualW - viewportW) / 2 : 0;
+  const maxPanY = visualH > viewportH ? (visualH - viewportH) / 2 : 0;
+
+  return {
+    x: Math.round(Math.max(-maxPanX, Math.min(maxPanX, targetX))),
+    y: Math.round(Math.max(-maxPanY, Math.min(maxPanY, targetY)))
+  };
+}
 
 // Helper to construct an Arrow (Line + Triangular Polygon Arrowhead)
 function createArrow(x1: number, y1: number, x2: number, y2: number, strokeColor: string, strokeWidth: number): Group {
@@ -204,6 +231,8 @@ export const BoardCanvas: React.FC = () => {
   const currentShapeRef = useRef<any>(null);
   const slideCacheRef = useRef<Record<string, any>>({});
   const thumbnailTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const switchSeqRef = useRef<number>(0);
+  const lastAppliedBgRef = useRef<{ slideId: string; type?: string; value?: string }>({ slideId: '' });
   const laserPointsRef = useRef<{ x: number; y: number; time: number }[]>([]);
   const laserAnimIdRef = useRef<number | null>(null);
 
@@ -245,6 +274,22 @@ export const BoardCanvas: React.FC = () => {
   strokeWidthRef.current = strokeWidth;
   pressureEnabledRef.current = pressureEnabled;
 
+  // Automatically clamp panOffset within strict boundary constraints whenever zoomLevel changes
+  useEffect(() => {
+    if (!containerRef.current || !fabricCanvasRef.current) return;
+    const clamped = clampPanOffset(
+      panOffsetRef.current.x,
+      panOffsetRef.current.y,
+      zoomLevel,
+      containerRef.current,
+      fabricCanvasRef.current.width || 1920,
+      fabricCanvasRef.current.height || 1080
+    );
+    if (clamped.x !== panOffsetRef.current.x || clamped.y !== panOffsetRef.current.y) {
+      dispatch(setPanOffset(clamped));
+    }
+  }, [zoomLevel, dispatch]);
+
   // Context Menu State for Object Layering & Management
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
@@ -257,6 +302,127 @@ export const BoardCanvas: React.FC = () => {
     y: 0,
     target: null
   });
+
+  // Position Mode for PDF / Image Background
+  const [isAdjustingPdf, setIsAdjustingPdf] = useState(false);
+  const pdfObjectRef = useRef<any>(null);
+  const isAdjustingPdfRef = useRef(false);
+  isAdjustingPdfRef.current = isAdjustingPdf;
+
+  const hasImageBackground = activeSlide?.background.type === 'pdf' || activeSlide?.background.type === 'image';
+
+  const startAdjustingPdfPosition = async () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !activeSlide?.background.value) return;
+
+    try {
+      setIsAdjustingPdf(true);
+      setContextMenu(prev => ({ ...prev, visible: false }));
+
+      // Disable drawing mode while adjusting background
+      canvas.isDrawingMode = false;
+      canvas.selection = false;
+
+      const bg = activeSlide.background;
+      const img = await FabricImage.fromURL(bg.value);
+      const imgW = img.width || 1920;
+      const imgH = img.height || 1080;
+      const baseScale = Math.min(1920 / imgW, 1080 / imgH);
+      const scale = baseScale * (bg.scale || 1);
+      const scaledWidth = imgW * scale;
+      const scaledHeight = imgH * scale;
+      const baseLeft = (1920 - scaledWidth) / 2;
+      const baseTop = (1080 - scaledHeight) / 2;
+      const left = baseLeft + (bg.offsetX || 0);
+      const top = baseTop + (bg.offsetY || 0);
+
+      img.set({
+        scaleX: scale,
+        scaleY: scale,
+        originX: 'left',
+        originY: 'top',
+        left,
+        top,
+        selectable: true,
+        evented: true,
+        hasControls: false,
+        hasBorders: true,
+        borderColor: '#C4F135',
+        borderDashArray: [6, 6],
+        borderScaleFactor: 2,
+        lockRotation: true,
+        lockScalingX: true,
+        lockScalingY: true,
+        hoverCursor: 'move',
+        moveCursor: 'grabbing'
+      });
+
+      pdfObjectRef.current = img;
+
+      // Remove canvas background image temporarily while adjuster object is active
+      canvas.backgroundImage = undefined;
+      canvas.add(img);
+      canvas.sendObjectToBack(img);
+      canvas.setActiveObject(img);
+      canvas.renderAll();
+    } catch (err) {
+      console.error('Error starting PDF position adjustment:', err);
+      setIsAdjustingPdf(false);
+    }
+  };
+
+  const finishAdjustingPdfPosition = async (reset = false) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !activeSlide) return;
+
+    try {
+      const pdfObj = pdfObjectRef.current;
+      let newOffsetX = 0;
+      let newOffsetY = 0;
+
+      if (pdfObj) {
+        const imgW = pdfObj.width || 1920;
+        const imgH = pdfObj.height || 1080;
+        const baseScale = Math.min(1920 / imgW, 1080 / imgH);
+        const scale = pdfObj.scaleX || baseScale;
+        const scaledWidth = imgW * scale;
+        const scaledHeight = imgH * scale;
+        const baseLeft = (1920 - scaledWidth) / 2;
+        const baseTop = (1080 - scaledHeight) / 2;
+
+        newOffsetX = reset ? 0 : Math.round((pdfObj.left ?? baseLeft) - baseLeft);
+        newOffsetY = reset ? 0 : Math.round((pdfObj.top ?? baseTop) - baseTop);
+
+        canvas.remove(pdfObj);
+        pdfObjectRef.current = null;
+      }
+
+      dispatch(updateSlideBackgroundPosition({
+        id: activeSlide.id,
+        offsetX: newOffsetX,
+        offsetY: newOffsetY
+      }));
+
+      await applyBackgroundToCanvas(canvas, {
+        ...activeSlide.background,
+        offsetX: newOffsetX,
+        offsetY: newOffsetY
+      });
+
+      canvas.renderAll();
+      setIsAdjustingPdf(false);
+
+      // Restore drawing brush if active tool was pen/highlighter
+      if (['pen', 'highlighter'].includes(activeToolRef.current)) {
+        canvas.isDrawingMode = true;
+      }
+
+      commitCanvasChange();
+    } catch (err) {
+      console.error('Error finishing PDF position adjustment:', err);
+      setIsAdjustingPdf(false);
+    }
+  };
 
   // Layering Actions
   const handleBringToFront = (target: any) => {
@@ -455,34 +621,55 @@ export const BoardCanvas: React.FC = () => {
     }
   };
 
-  // Debounced thumbnail generator
+  // Debounced thumbnail generator (safe fallback that never mutates canvasJSON)
   const scheduleThumbnailUpdate = (slideId: string) => {
     if (thumbnailTimerRef.current) {
       clearTimeout(thumbnailTimerRef.current);
+      thumbnailTimerRef.current = null;
     }
     thumbnailTimerRef.current = setTimeout(() => {
       const canvas = fabricCanvasRef.current;
       if (!canvas || !slideId) return;
+      // Stale slide check: don't capture if active slide has changed or canvas is switching
+      if (activeSlideIdRef.current !== slideId || isSwitchingRef.current) return;
+
       const thumb = captureThumbnail(canvas);
-      dispatch(updateSlideCanvas({
-        id: slideId,
-        canvasJSON: canvas.toJSON(),
-        thumbnail: thumb
-      }));
-    }, 350);
+      if (thumb) {
+        dispatch(updateSlideCanvas({
+          id: slideId,
+          thumbnail: thumb
+        }));
+      }
+    }, 250);
   };
 
   // Commit changes to history & Redux
   const commitCanvasChange = () => {
     const canvas = fabricCanvasRef.current;
     const currentId = activeSlideIdRef.current;
-    if (!canvas || !currentId) return;
+    if (!canvas || !currentId || isSwitchingRef.current || isRestoringRef.current) return;
+
+    // Ensure the latest objects are painted onto lowerCanvasEl before capturing thumbnail
+    canvas.renderAll();
 
     const json = canvas.toJSON();
     slideCacheRef.current[currentId] = json;
     dispatch(pushHistory({ slideId: currentId, json: JSON.stringify(json) }));
-    dispatch(updateSlideCanvas({ id: currentId, canvasJSON: json }));
-    scheduleThumbnailUpdate(currentId);
+    
+    // Capture thumbnail immediately for real-time sidebar preview (zero delay / no 1-stroke lag)
+    const thumb = captureThumbnail(canvas);
+    if (thumb) {
+      dispatch(updateSlideCanvas({ 
+        id: currentId, 
+        canvasJSON: json,
+        thumbnail: thumb 
+      }));
+    } else {
+      dispatch(updateSlideCanvas({ 
+        id: currentId, 
+        canvasJSON: json 
+      }));
+    }
   };
 
   // Segment-level and object-level Erasing
@@ -633,6 +820,7 @@ export const BoardCanvas: React.FC = () => {
     // Freehand Stroke Finished Listener
     const handlePathCreated = () => {
       if (isSwitchingRef.current || isRestoringRef.current) return;
+      canvas.renderAll();
       commitCanvasChange();
     };
     canvas.on('path:created', handlePathCreated);
@@ -642,14 +830,16 @@ export const BoardCanvas: React.FC = () => {
       setContextMenu(prev => prev.visible ? { ...prev, visible: false } : prev);
       if (isSwitchingRef.current || isRestoringRef.current) return;
 
-      // Space + Drag or Middle Mouse Panning
+      // Space + Drag or Middle Mouse Panning (works when zoomed in)
       if (isSpaceDownRef.current || (opt.e && opt.e.button === 1)) {
-        isPanningRef.current = true;
-        dispatch(setIsPanning(true));
-        panStartRef.current = { x: opt.e.clientX, y: opt.e.clientY };
-        initialPanRef.current = { ...panOffsetRef.current };
-        canvas.defaultCursor = 'grabbing';
-        return;
+        if (zoomLevelRef.current > 1.0) {
+          isPanningRef.current = true;
+          dispatch(setIsPanning(true));
+          panStartRef.current = { x: opt.e.clientX, y: opt.e.clientY };
+          initialPanRef.current = { ...panOffsetRef.current };
+          canvas.defaultCursor = 'grabbing';
+          return;
+        }
       }
 
       const tool = activeToolRef.current;
@@ -754,9 +944,14 @@ export const BoardCanvas: React.FC = () => {
         opt.e.stopPropagation();
       }
       const target = opt.target || canvas.getActiveObject();
-      if (target) {
-        canvas.setActiveObject(target);
-        canvas.renderAll();
+      const currentSlide = slidesRef.current.find(s => s.id === activeSlideIdRef.current);
+      const isImgBg = currentSlide?.background.type === 'pdf' || currentSlide?.background.type === 'image';
+
+      if (target || isImgBg) {
+        if (target) {
+          canvas.setActiveObject(target);
+          canvas.renderAll();
+        }
         const clientX = opt.e?.clientX ?? (window.innerWidth / 2);
         const clientY = opt.e?.clientY ?? (window.innerHeight / 2);
         setContextMenu({
@@ -773,15 +968,20 @@ export const BoardCanvas: React.FC = () => {
 
     // Mouse Move Listener for Shapes, Eraser, Laser, & Panning
     const handleMouseMove = (opt: any) => {
-      // Panning in progress
+      // Panning in progress with strict boundary constraints
       if (isPanningRef.current && opt.e) {
         const e = opt.e;
         const dx = e.clientX - panStartRef.current.x;
         const dy = e.clientY - panStartRef.current.y;
-        dispatch(setPanOffset({
-          x: Math.round(initialPanRef.current.x + dx),
-          y: Math.round(initialPanRef.current.y + dy)
-        }));
+        const clamped = clampPanOffset(
+          initialPanRef.current.x + dx,
+          initialPanRef.current.y + dy,
+          zoomLevelRef.current,
+          containerRef.current,
+          fabricCanvasRef.current?.width || 1920,
+          fabricCanvasRef.current?.height || 1080
+        );
+        dispatch(setPanOffset(clamped));
         return;
       }
 
@@ -958,12 +1158,11 @@ export const BoardCanvas: React.FC = () => {
     };
     canvas.on('object:modified', handleObjectModified);
 
-    // Responsive High-DPI Resize Handler
+    // Responsive High-DPI Resize Handler (using untransformed layout client dimensions)
     const updateSize = () => {
       if (!containerRef.current || !canvas) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const containerWidth = rect.width;
-      const containerHeight = rect.height;
+      const containerWidth = containerRef.current.clientWidth || window.innerWidth;
+      const containerHeight = containerRef.current.clientHeight || window.innerHeight;
 
       if (containerWidth <= 0 || containerHeight <= 0) return;
 
@@ -1052,6 +1251,22 @@ export const BoardCanvas: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
 
+      // Arrow keys fine-tuning during PDF Position Mode (1px normal, 10px with Shift)
+      if (isAdjustingPdfRef.current && pdfObjectRef.current) {
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+          e.preventDefault();
+          const step = e.shiftKey ? 10 : 1;
+          const pdfObj = pdfObjectRef.current;
+          if (e.key === 'ArrowUp') pdfObj.top = (pdfObj.top || 0) - step;
+          if (e.key === 'ArrowDown') pdfObj.top = (pdfObj.top || 0) + step;
+          if (e.key === 'ArrowLeft') pdfObj.left = (pdfObj.left || 0) - step;
+          if (e.key === 'ArrowRight') pdfObj.left = (pdfObj.left || 0) + step;
+          pdfObj.setCoords();
+          canvas.renderAll();
+          return;
+        }
+      }
+
       if (e.code === 'Space' && !isSpaceDownRef.current) {
         e.preventDefault();
         isSpaceDownRef.current = true;
@@ -1139,9 +1354,36 @@ export const BoardCanvas: React.FC = () => {
 
     const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
+        // Ctrl + Wheel: Zoom In / Out
         e.preventDefault();
         const delta = e.deltaY < 0 ? 0.08 : -0.08;
-        dispatch(setZoom(zoomLevelRef.current + delta));
+        const nextZoom = Math.max(0.25, Math.min(4.0, Number((zoomLevelRef.current + delta).toFixed(2))));
+        dispatch(setZoom(nextZoom));
+        const clamped = clampPanOffset(
+          panOffsetRef.current.x,
+          panOffsetRef.current.y,
+          nextZoom,
+          containerRef.current,
+          fabricCanvasRef.current?.width || 1920,
+          fabricCanvasRef.current?.height || 1080
+        );
+        dispatch(setPanOffset(clamped));
+      } else {
+        // Trackpad / Wheel without Ctrl: Smooth 2D Pan when zoomed in
+        if (zoomLevelRef.current > 1.0) {
+          e.preventDefault();
+          const deltaX = e.shiftKey ? -e.deltaY : -e.deltaX;
+          const deltaY = e.shiftKey ? 0 : -e.deltaY;
+          const clamped = clampPanOffset(
+            panOffsetRef.current.x + deltaX,
+            panOffsetRef.current.y + deltaY,
+            zoomLevelRef.current,
+            containerRef.current,
+            fabricCanvasRef.current?.width || 1920,
+            fabricCanvasRef.current?.height || 1080
+          );
+          dispatch(setPanOffset(clamped));
+        }
       }
     };
 
@@ -1184,14 +1426,23 @@ export const BoardCanvas: React.FC = () => {
 
     if (prevId === targetId) return;
 
+    // Immediately cancel any pending debounced thumbnail update from previous slide
+    if (thumbnailTimerRef.current) {
+      clearTimeout(thumbnailTimerRef.current);
+      thumbnailTimerRef.current = null;
+    }
+
+    const switchSeq = ++switchSeqRef.current;
+
     const switchSlide = async () => {
       isSwitchingRef.current = true;
 
       try {
-        if (prevId) {
+        // 1. Synchronously save the departing slide's canvas state & thumbnail
+        if (prevId && prevId !== targetId) {
           const prevJson = canvas.toJSON();
-          slideCacheRef.current[prevId] = prevJson;
           const prevThumb = captureThumbnail(canvas);
+          slideCacheRef.current[prevId] = prevJson;
           dispatch(updateSlideCanvas({
             id: prevId,
             canvasJSON: prevJson,
@@ -1199,23 +1450,47 @@ export const BoardCanvas: React.FC = () => {
           }));
         }
 
+        // 2. Thoroughly purge old canvas objects & active selection
+        canvas.discardActiveObject();
+        const existingObjs = canvas.getObjects();
+        if (existingObjs.length > 0) {
+          canvas.remove(...existingObjs);
+        }
         canvas.clear();
         prevSlideIdRef.current = targetId;
+
+        // Check sequence token before proceeding
+        if (switchSeq !== switchSeqRef.current) return;
 
         const targetSlide = slidesRef.current.find(s => s.id === targetId);
         if (!targetSlide) return;
 
-        const cachedJson = slideCacheRef.current[targetId] || targetSlide.canvasJSON;
-        if (cachedJson && cachedJson.objects && cachedJson.objects.length > 0) {
-          await canvas.loadFromJSON(cachedJson);
+        // 3. Load target slide's JSON (or leave canvas empty if fresh slide)
+        let jsonToLoad = slideCacheRef.current[targetId] ?? targetSlide.canvasJSON;
+        if (typeof jsonToLoad === 'string') {
+          try {
+            jsonToLoad = JSON.parse(jsonToLoad);
+          } catch {
+            jsonToLoad = null;
+          }
         }
 
+        if (jsonToLoad && Array.isArray(jsonToLoad.objects) && jsonToLoad.objects.length > 0) {
+          await canvas.loadFromJSON(jsonToLoad);
+        }
+
+        if (switchSeq !== switchSeqRef.current) return;
+
+        // 4. Apply the target slide's background
         await applyBackgroundToCanvas(canvas, targetSlide.background);
+
+        if (switchSeq !== switchSeqRef.current) return;
+
         updateCanvasScaleRef.current();
 
         if (canvas.freeDrawingBrush) {
-          canvas.freeDrawingBrush.color = strokeColor;
-          canvas.freeDrawingBrush.width = strokeWidth;
+          canvas.freeDrawingBrush.color = strokeColorRef.current;
+          canvas.freeDrawingBrush.width = strokeWidthRef.current;
           canvas.freeDrawingBrush.decimate = 2.5;
         }
 
@@ -1234,7 +1509,9 @@ export const BoardCanvas: React.FC = () => {
       } catch (err) {
         console.error('Error during slide switch:', err);
       } finally {
-        isSwitchingRef.current = false;
+        if (switchSeq === switchSeqRef.current) {
+          isSwitchingRef.current = false;
+        }
       }
     };
 
@@ -1345,18 +1622,52 @@ export const BoardCanvas: React.FC = () => {
   // 5. Sync Background Changes on Active Slide
   const activeBgType = activeSlide?.background.type;
   const activeBgValue = activeSlide?.background.value;
+
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !activeSlide || isSwitchingRef.current) return;
+    if (!canvas || !activeSlide) return;
+
+    // Slide switch already handles background application inside switchSlide.
+    // Only execute when the user explicitly changes background on the SAME active slide!
+    if (lastAppliedBgRef.current.slideId !== activeSlide.id) {
+      lastAppliedBgRef.current = {
+        slideId: activeSlide.id,
+        type: activeBgType,
+        value: activeBgValue
+      };
+      return;
+    }
+
+    if (
+      lastAppliedBgRef.current.type === activeBgType &&
+      lastAppliedBgRef.current.value === activeBgValue
+    ) {
+      return;
+    }
+
+    lastAppliedBgRef.current = {
+      slideId: activeSlide.id,
+      type: activeBgType,
+      value: activeBgValue
+    };
+
+    if (isSwitchingRef.current) return;
 
     const updateBg = async () => {
       await applyBackgroundToCanvas(canvas, activeSlide.background);
+      canvas.renderAll();
+      const currentJson = canvas.toJSON();
+      slideCacheRef.current[activeSlide.id] = currentJson;
       const thumb = captureThumbnail(canvas);
-      dispatch(updateSlideCanvas({ id: activeSlide.id, canvasJSON: canvas.toJSON(), thumbnail: thumb }));
+      dispatch(updateSlideCanvas({ 
+        id: activeSlide.id, 
+        canvasJSON: currentJson, 
+        thumbnail: thumb 
+      }));
     };
 
     updateBg();
-  }, [activeBgType, activeBgValue]);
+  }, [activeSlide?.id, activeBgType, activeBgValue]);
 
   // 6. Handle Undo / Redo Restore Signals
   useEffect(() => {
@@ -1392,9 +1703,8 @@ export const BoardCanvas: React.FC = () => {
 
     const updateCanvasScale = () => {
       if (!containerRef.current || !fabricCanvasRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const containerWidth = rect.width;
-      const containerHeight = rect.height;
+      const containerWidth = containerRef.current.clientWidth || window.innerWidth;
+      const containerHeight = containerRef.current.clientHeight || window.innerHeight;
       if (containerWidth > 10 && containerHeight > 10) {
         const margin = isZenModeRef.current ? 0 : 16;
         const scale = Math.min(
@@ -1483,6 +1793,49 @@ export const BoardCanvas: React.FC = () => {
         <CanvasWatermark />
       </div>
 
+      {/* Quick Trigger Button for PDF / Image Background Nudging */}
+      {hasImageBackground && !isAdjustingPdf && !isZenMode && (
+        <button
+          type="button"
+          onClick={startAdjustingPdfPosition}
+          className="absolute top-3 left-4 z-30 px-3 py-1.5 rounded-xl backdrop-blur-md bg-[#12150e]/90 hover:bg-[#1c2217] border border-[#2e3725] hover:border-[#C4F135]/50 text-[#f4f6ee] text-xs font-semibold shadow-xl flex items-center gap-2 transition-all hover:scale-105 active:scale-95 select-none"
+          title="Adjust and nudge PDF page placement"
+        >
+          <Move className="w-3.5 h-3.5 text-[#C4F135]" />
+          <span>Adjust PDF Position</span>
+        </button>
+      )}
+
+      {/* Floating Control Bar during Position Mode */}
+      {isAdjustingPdf && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-[#12150e]/95 backdrop-blur-md border border-[#C4F135]/50 text-[#f4f6ee] px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-3.5 animate-in fade-in slide-in-from-top-3 select-none">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#C4F135] animate-ping" />
+            <span className="text-xs font-bold text-[#C4F135]">Position Mode</span>
+            <span className="text-xs text-[#9ba38e]">
+              Drag PDF or use Arrow keys (Shift+Arrow for 10px)
+            </span>
+          </div>
+          <div className="h-4 w-[1px] bg-[#242b1d]" />
+          <button
+            type="button"
+            onClick={() => finishAdjustingPdfPosition(true)}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold hover:bg-[#1c2217] text-[#9ba38e] hover:text-[#f4f6ee] transition-all flex items-center gap-1"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Reset</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => finishAdjustingPdfPosition(false)}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#C4F135] hover:bg-[#b2dc2b] text-[#0c0e0a] flex items-center gap-1.5 shadow-md shadow-[#C4F135]/25 transition-all active:scale-95"
+          >
+            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>Done / Lock Position</span>
+          </button>
+        </div>
+      )}
+
       {/* Right-Click Layering & Management Context Menu */}
       {contextMenu.visible && (
         <div
@@ -1493,61 +1846,80 @@ export const BoardCanvas: React.FC = () => {
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            type="button"
-            onClick={() => handleBringToFront(contextMenu.target)}
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
-          >
-            <BringToFront className="w-4 h-4 text-[#C4F135]" />
-            <span>Bring to Front</span>
-            <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+Shift+]</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleBringForward(contextMenu.target)}
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
-          >
-            <ArrowUp className="w-4 h-4 text-[#9ba38e]" />
-            <span>Bring Forward</span>
-            <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+]</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSendBackward(contextMenu.target)}
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
-          >
-            <ArrowDown className="w-4 h-4 text-[#9ba38e]" />
-            <span>Send Backward</span>
-            <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+[</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSendToBack(contextMenu.target)}
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
-          >
-            <SendToBack className="w-4 h-4 text-[#9ba38e]" />
-            <span>Send to Back</span>
-            <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+Shift+[</span>
-          </button>
-          <div className="w-full h-[1px] bg-[#242b1d] my-1" />
-          <button
-            type="button"
-            onClick={() => handleDuplicate(contextMenu.target)}
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
-          >
-            <Copy className="w-4 h-4 text-[#9ba38e]" />
-            <span>Duplicate</span>
-            <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+D</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDelete(contextMenu.target)}
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-red-400 hover:bg-red-950/40 hover:text-red-300 text-left transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-            <span>Delete</span>
-            <span className="ml-auto text-[10px] font-mono text-red-400/60">Del</span>
-          </button>
+          {hasImageBackground && !isAdjustingPdf && (
+            <>
+              <button
+                type="button"
+                onClick={startAdjustingPdfPosition}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
+              >
+                <Move className="w-4 h-4 text-[#C4F135]" />
+                <span>Adjust PDF Position</span>
+                <span className="ml-auto text-[10px] font-mono text-[#636c58]">Nudge</span>
+              </button>
+              {contextMenu.target && <div className="w-full h-[1px] bg-[#242b1d] my-1" />}
+            </>
+          )}
+
+          {contextMenu.target && (
+            <>
+              <button
+                type="button"
+                onClick={() => handleBringToFront(contextMenu.target)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
+              >
+                <BringToFront className="w-4 h-4 text-[#C4F135]" />
+                <span>Bring to Front</span>
+                <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+Shift+]</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBringForward(contextMenu.target)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
+              >
+                <ArrowUp className="w-4 h-4 text-[#9ba38e]" />
+                <span>Bring Forward</span>
+                <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+]</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSendBackward(contextMenu.target)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
+              >
+                <ArrowDown className="w-4 h-4 text-[#9ba38e]" />
+                <span>Send Backward</span>
+                <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+[</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSendToBack(contextMenu.target)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
+              >
+                <SendToBack className="w-4 h-4 text-[#9ba38e]" />
+                <span>Send to Back</span>
+                <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+Shift+[</span>
+              </button>
+              <div className="w-full h-[1px] bg-[#242b1d] my-1" />
+              <button
+                type="button"
+                onClick={() => handleDuplicate(contextMenu.target)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#f4f6ee] hover:bg-[#1f2618] hover:text-[#C4F135] text-left transition-colors"
+              >
+                <Copy className="w-4 h-4 text-[#9ba38e]" />
+                <span>Duplicate</span>
+                <span className="ml-auto text-[10px] font-mono text-[#636c58]">Ctrl+D</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(contextMenu.target)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-red-400 hover:bg-red-950/40 hover:text-red-300 text-left transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete</span>
+                <span className="ml-auto text-[10px] font-mono text-red-400/60">Del</span>
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
